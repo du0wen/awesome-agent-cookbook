@@ -1,7 +1,7 @@
 # Awesome Agent Cookbook 👨‍💻🍳
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/du0wen/awesome-agent-cookbook/pulls)
 
 > A curated collection of battle-tested recipes, reusable agent skills, workflow patterns, and practical tips for building and coding with AI Agents (Codex, Claude Code, Cursor, Windsurf, Antigravity, and beyond).
 
@@ -13,6 +13,32 @@
 | :--- | :--- | :--- | :--- |
 | **Workflow Protocol** | [Optimization Workflow](./skills/optimization-workflow/SKILL.md) | Universal / Antigravity / Claude Code | A strict 3-phase execution protocol (`State Assessment` ➔ `Self-Diagnosis` ➔ `Tiered Proposals`) preventing premature or destructive code edits. |
 | **Quota Management** | [Codex & Claude 5h Rolling Window](./tips/codex-5h-quota-window.md) | OpenAI Codex / Claude Code | Align 5-hour rolling rate-limit windows with daily work schedules via automated heartbeat triggers, preventing mid-flow lockouts. |
+
+---
+
+## ⚡ Quick Start: Loading Skills into Your Agent
+
+Skills in this repository follow standard agent skill specifications (`SKILL.md` with metadata frontmatter).
+
+### For Google Antigravity
+Symlink or copy the skill into your Antigravity skills directory:
+```bash
+# Global user skills:
+mkdir -p ~/.gemini/config/skills/
+cp -r skills/optimization-workflow ~/.gemini/config/skills/
+
+# Or for the current workspace:
+mkdir -p .gemini/skills/
+cp -r skills/optimization-workflow .gemini/skills/
+```
+
+### For Claude Code / Cursor / CLI Agents
+Reference the execution protocol directly in your system prompt or `.cursorrules` / `CLAUDE.md`:
+```markdown
+Follow the 3-phase optimization protocol in skills/optimization-workflow/SKILL.md:
+1) Current State Assessment, 2) Self-Inspection & Root Cause, 3) Tiered Proposals (A/B/C).
+Never mutate code without user confirmation.
+```
 
 ---
 
