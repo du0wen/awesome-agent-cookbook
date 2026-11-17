@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Code Video Demo</title>
+<style>
+  html, body { margin: 0; background: #fdf8ed; }
+  canvas { display: block; width: 1920px; height: 1080px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script src="timeline.js"></script>
+<script>
+// ============================================================================
+// Contract: window.__duration (s) and window.__seek(t). Frame = f(t), nothing else.
+// Rules: no Date/performance.now, no Math.random, no network.
+// ============================================================================
+const W = 1920, H = 1080;
+const ctx = document.getElementById('c').getContext('2d');
+const TL = window.TIMELINE;
+window.__duration = TL.duration;
+
+const C = {
+  paper: '#fdf8ed', ink: '#3b3a36', dark: '#2f3138', white: '#fffdf7',
+  yellow: '#ffd257', pink: '#f7a8b8',
+  blue: '#bfe0fa', blueD: '#4f8fd6', green: '#bfe8c4', greenD: '#5fae6e',
+  purple: '#ddd0fa', purpleD: '#8d6fe0', orange: '#fcd3b4', orangeD: '#e68545', red: '#ef6f6c',
+  sky: '#dcefff', hill: '#9fd6a3',
+};
+const FONT = '"PingFang SC","Hiragino Sans GB","Heiti SC",sans-serif';
+
+// ---------- deterministic randomness ----------
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+let BOIL = 0;                                   // line-boil tick, set from t (8 Hz)
+const R = key => mulberry32(hash(key) + BOIL * 7919);
+const FIXED = key => mulberry32(hash(key));     // never changes over time
+
+// ---------- easing ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, d) => clamp((t - a) / d);
+const lerp = (a, b, x) => a + (b - a) * x;
+const easeOut = x => 1 - Math.pow(1 - x, 3);
+const easeInOut = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const easeOutBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+
+// ---------- hand-drawn primitives ----------
+function roughPoly(pts, { key = 'p', closed = true, fill = null, stroke = C.ink, lw = 4, j = 2.2, passes = 2 } = {}) {
+  const r = R(key);
+  if (fill) {
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+  }
+  if (!stroke) return;
+  ctx.strokeStyle = stroke; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (let p = 0; p < passes; p++) {
+    const q = pts.map(([x, y]) => [x + (r() - .5) * 2 * j, y + (r() - .5) * 2 * j]);
+    if (closed) q.push(q[0]);
+    ctx.beginPath(); ctx.moveTo(q[0][0], q[0][1]);
+    for (let i = 1; i < q.length; i++) {
+      const [x0, y0] = q[i - 1], [x1, y1] = q[i];
+      ctx.quadraticCurveTo((x0 + x1) / 2 + (r() - .5) * j * 1.5, (y0 + y1) / 2 + (r() - .5) * j * 1.5, x1, y1);
+    }
+    ctx.lineWidth = p ? lw * 0.55 : lw; ctx.stroke();
+  }
+}
+function rrPts(x, y, w, h, rad = 18) {
+  const pts = [], step = 110;
+  const edge = (x0, y0, x1, y1) => { const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / step)); for (let i = 0; i < n; i++) pts.push([lerp(x0, x1, i / n), lerp(y0, y1, i / n)]); };
+  const arc = (cx, cy, a0) => { for (let i = 0; i <= 3; i++) { const a = a0 + i * Math.PI / 6; pts.push([cx + Math.cos(a) * rad, cy + Math.sin(a) * rad]); } };
+  edge(x + rad, y, x + w - rad, y); arc(x + w - rad, y + rad, -Math.PI / 2);
+  edge(x + w, y + rad, x + w, y + h - rad); arc(x + w - rad, y + h - rad, 0);
+  edge(x + w - rad, y + h, x + rad, y + h); arc(x + rad, y + h - rad, Math.PI / 2);
+  edge(x, y + h - rad, x, y + rad); arc(x + rad, y + rad, Math.PI);
+  return pts;
+}
+const roughRect = (x, y, w, h, o = {}) => roughPoly(rrPts(x, y, w, h, o.rad ?? 18), o);
+function roughCircle(cx, cy, r, o = {}) {
+  const pts = []; for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  roughPoly(pts, { j: Math.min(2.2, r * 0.05), ...o });
+}
+const roughLine = (x1, y1, x2, y2, o = {}) => roughPoly([[x1, y1], [(x1 + x2) / 2, (y1 + y2) / 2], [x2, y2]], { closed: false, ...o });
+function arrow(x1, y1, x2, y2, o = {}) {
+  roughLine(x1, y1, x2, y2, o);
+  const a = Math.atan2(y2 - y1, x2 - x1), L = o.head ?? 26;
+  roughLine(x2, y2, x2 - Math.cos(a - .5) * L, y2 - Math.sin(a - .5) * L, { ...o, key: (o.key || 'a') + 'h1' });
+  roughLine(x2, y2, x2 - Math.cos(a + .5) * L, y2 - Math.sin(a + .5) * L, { ...o, key: (o.key || 'a') + 'h2' });
+}
+function text(s, x, y, { size = 48, color = C.ink, align = 'center', weight = 700, alpha = 1, base = 'middle' } = {}) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = base;
+  ctx.font = `${weight} ${size}px ${FONT}`; ctx.fillText(s, x, y); ctx.restore();
+}
+const reveal = (s, p) => [...s].slice(0, Math.ceil(clamp(p) * [...s].length)).join('');
+function withScale(cx, cy, s, fn) { if (s <= 0.001) return; ctx.save(); ctx.translate(cx, cy); ctx.scale(s, s); ctx.translate(-cx, -cy); fn(); ctx.restore(); }
+
+// ---------- mascot: 小星 (fixed design) ----------
+function star(cx, cy, r, { key = 'star', rot = 0, mood = 0.5, fill = C.yellow, face = true, alpha = 1, blinkT = 1 } = {}) {
+  if (r <= 0.5) return;
+  ctx.save(); ctx.globalAlpha *= alpha;
+  const pts = []; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + rot + i * Math.PI / 5; const rr = i % 2 ? r * 0.5 : r; pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]); }
+  roughPoly(pts, { key, fill, lw: Math.max(2, 4.5 * r / 90), j: Math.max(0.6, r * 0.025) });
+  if (face) {
+    const s = r / 90, ey = cy + 6 * s;
+    const blink = (blinkT % 3.1) < 0.12 ? 0.15 : 1;         // deterministic blink from scene time
+    ctx.fillStyle = C.ink;
+    for (const dx of [-20, 20]) { ctx.beginPath(); ctx.ellipse(cx + dx * s, ey, 6.5 * s, 8 * s * blink, 0, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = C.pink; ctx.globalAlpha *= 0.7;
+    for (const dx of [-34, 34]) { ctx.beginPath(); ctx.ellipse(cx + dx * s, ey + 16 * s, 8 * s, 5 * s, 0, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha /= 0.7;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = Math.max(1.5, 4 * s); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(cx, ey + 12 * s, (8 + 6 * mood) * s, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
+  ctx.restore();
+}
+function miniScene(x, y, w, h, key) {           // sky + hill used inside frames/windows
+  ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  ctx.fillStyle = C.sky; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = C.hill; ctx.beginPath(); ctx.ellipse(x + w * 0.3, y + h * 1.05, w * 0.55, h * 0.3, 0, 0, Math.PI * 2); ctx.ellipse(x + w * 0.85, y + h * 1.08, w * 0.4, h * 0.28, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function chip(label, color) {
+  ctx.font = `700 34px ${FONT}`; const w = ctx.measureText(label).width + 56;
+  roughRect(60, 44, w, 64, { key: 'chip' + label, fill: color, lw: 3, rad: 30 });
+  text(label, 60 + w / 2, 77, { size: 34 });
+}
+
+// ---------- background, subtitles, transitions ----------
+function background() {
+  ctx.fillStyle = C.paper; ctx.fillRect(0, 0, W, H);
+  const r = FIXED('paper'); ctx.fillStyle = 'rgba(120,100,60,0.06)';
+  for (let i = 0; i < 260; i++) { ctx.beginPath(); ctx.arc(r() * W, r() * H, 1 + r() * 2.5, 0, Math.PI * 2); ctx.fill(); }
+}
+function subtitles(t) {
+  for (const sc of TL.scenes) for (const l of sc.lines) {
+    if (t < l.start - 0.1 || t > l.end + 0.25) continue;
+    const a = Math.min(prog(t, l.start - 0.1, 0.15), 1 - prog(t, l.end + 0.1, 0.15));
+    ctx.save(); ctx.globalAlpha = a; ctx.font = `600 40px ${FONT}`;
+    const w = ctx.measureText(l.text).width + 70;
+    ctx.fillStyle = 'rgba(47,49,56,0.82)'; ctx.beginPath(); ctx.roundRect(W / 2 - w / 2, 975, w, 70, 35); ctx.fill();
+    ctx.restore();
+    text(l.text, W / 2, 1011, { size: 40, color: C.white, weight: 600, alpha: a });
+  }
+}
+function wipes(t) {                             // motivated transition: 小星 bursts into a circle
+  for (let i = 0; i < TL.scenes.length - 1; i++) {
+    const b = TL.scenes[i].end;
+    let k = 0;
+    if (t >= b - 0.45 && t < b) k = easeInOut(prog(t, b - 0.45, 0.45));
+    else if (t >= b && t < b + 0.4) k = 1 - easeInOut(prog(t, b, 0.4));
+    if (k <= 0) continue;
+    ctx.fillStyle = C.yellow; ctx.beginPath(); ctx.arc(W / 2, H / 2, k * 1150, 0, Math.PI * 2); ctx.fill();
+    star(W / 2, H / 2, 40 + k * 110, { key: 'wipeStar', rot: k * 1.2, mood: 1, fill: C.white });
+  }
+}
+
+// ---------- scenes: each gets (lt = local time, d = duration, c = line cue times) ----------
+const SCENES = {
+  hook(lt, d, c) {
+    chip('开场', C.blue);
+    text(reveal('这段视频，是程序画出来的', prog(lt, c[0], 1.4)), W / 2, 170, { size: 76 });
+    // code editor typing
+    roughRect(150, 270, 770, 540, { key: 'ed', fill: C.dark });
+    [C.red, C.yellow, C.greenD].forEach((col, i) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(190 + i * 32, 305, 10, 0, Math.PI * 2); ctx.fill(); });
+    const fr = FIXED('code'), cols = ['#7fb6f2', '#9be3a6', '#f5c66b', '#c6a5f5', '#f49b8f'];
+    let cx = 0, cy = 0;
+    for (let i = 0; i < 10; i++) {
+      const segs = [1 + Math.floor(fr() * 3)].flatMap(n => Array.from({ length: n + 1 }, () => [60 + fr() * 170, cols[Math.floor(fr() * 5)]]));
+      const indent = (i % 4 === 1 || i % 4 === 2) ? 50 : 0;
+      const p = prog(lt, 0.2 + i * 0.42, 0.4); if (p <= 0) continue;
+      let x = 200 + indent, y = 360 + i * 44; const total = segs.reduce((s, [w]) => s + w + 18, 0);
+      let budget = total * easeOut(p);
+      for (const [w, col] of segs) { const ww = Math.min(w, budget); if (ww <= 0) break; ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(x, y - 10, ww, 20, 10); ctx.fill(); x += w + 18; budget -= w + 18; }
+      cx = 200 + indent + total * easeOut(p); cy = y;
+    }
+    if (Math.floor(lt * 2.5) % 2 === 0) { ctx.fillStyle = C.white; ctx.fillRect(cx + 4, cy - 16, 5, 32); }
+    // arrow + screen
+    const ap = easeOut(prog(lt, c[1] - 0.3, 0.4));
+    if (ap > 0) arrow(935, 540, 935 + 50 * ap, 540, { key: 'ar1', lw: 6, head: 22 * ap });
+    roughRect(1005, 270, 770, 540, { key: 'scr', fill: C.white });
+    miniScene(1025, 290, 730, 500, 'm1');
+    const sp = prog(lt, c[1], 0.7);
+    const bounce = sp >= 1 ? Math.abs(Math.sin((lt - c[1] - 0.7) * 3.2)) * 50 : 0;
+    star(1390, 560 - bounce, 120 * easeOutBack(sp), { key: 'hero', mood: 0.6 + 0.4 * sp, blinkT: lt, rot: Math.sin(lt * 2) * 0.08 });
+    if (sp <= 0) text('?', 1390, 540, { size: 140, color: '#b9c9d9', alpha: 0.6 + 0.4 * Math.sin(lt * 4) });
+  },
+
+  frames(lt, d, c) {
+    chip('视频 = 一串图片', C.blue);
+    // scrolling filmstrip (flipbook)
+    const y0 = 300, ch = 210, cw = 280, gap = 34, pitch = cw + gap, off = lt * 170;
+    ctx.fillStyle = C.dark; ctx.fillRect(0, y0 - 50, W, ch + 100);
+    ctx.fillStyle = C.paper;
+    for (let x = -((off * 1.0) % 60); x < W; x += 60) { ctx.beginPath(); ctx.roundRect(x + 10, y0 - 38, 30, 20, 5); ctx.roundRect(x + 10, y0 + ch + 18, 30, 20, 5); ctx.fill(); }
+    const k0 = Math.floor(off / pitch) - 1;
+    for (let k = k0; k < k0 + 9; k++) {
+      const x = 40 + k * pitch - off; if (x > W || x + cw < 0) continue;
+      miniScene(x, y0, cw, ch, 'f' + k);
+      const m = ((k % 10) + 10) % 10;
+      star(x + 50 + m * 19, y0 + 110 - Math.sin(m * 0.7) * 45, 34, { key: 'fs' + k, blinkT: 9 });
+      text(String(k + 1), x + cw - 24, y0 + 24, { size: 22, color: '#6c7a89' });
+    }
+    // frame counter
+    const n = Math.floor(lt * 30) + 1;
+    roughRect(1490, 44, 370, 70, { key: 'cnt', fill: C.white, lw: 3, rad: 34 });
+    text(`第 ${n} 帧`, 1675, 80, { size: 38, color: C.blueD });
+    // equation card on line 2
+    const ep = prog(lt, c[1], 0.6);
+    withScale(W / 2, 740, easeOutBack(ep), () => {
+      roughRect(W / 2 - 520, 660, 1040, 160, { key: 'eq', fill: C.orange, rad: 40 });
+      text('10 秒 × 30 帧 = 300 张图', W / 2, 742, { size: 72 });
+    });
+    if (ep <= 0) text(reveal('连续播放，就成了动作', prog(lt, c[0] + 0.8, 1.2)), W / 2, 740, { size: 60, color: C.blueD });
+  },
+
+  ft(lt, d, c) {
+    chip('核心问题', C.purple);
+    // formula
+    const fp = prog(lt, c[0], 0.8);
+    withScale(1150, 230, easeOutBack(fp), () => {
+      roughRect(830, 150, 640, 160, { key: 'fbox', fill: C.purple, rad: 40 });
+      text('画面 = f( t )', 1150, 232, { size: 92 });
+    });
+    // code box -> f on line 3
+    const cp = prog(lt, c[2], 0.6);
+    withScale(400, 230, easeOutBack(cp), () => {
+      roughRect(190, 160, 420, 140, { key: 'cbox', fill: C.dark, rad: 26 });
+      text('AI 写的程序', 400, 232, { size: 48, color: C.white });
+    });
+    if (cp > 0.3) arrow(625, 232, 625 + 185 * easeOut(prog(lt, c[2] + 0.2, 0.4)), 232, { key: 'ar3', lw: 6 });
+    // path + slider scrubbing t
+    const vp = easeOut(prog(lt, c[1] - 0.3, 0.6));
+    if (vp <= 0) return;
+    ctx.save(); ctx.globalAlpha = vp;
+    const px = u => 300 + 1320 * u, py = u => 590 - Math.sin(u * Math.PI * 2) * 110;
+    ctx.setLineDash([14, 16]); ctx.strokeStyle = C.purpleD; ctx.lineWidth = 4; ctx.beginPath();
+    for (let i = 0; i <= 60; i++) { const u = i / 60; i ? ctx.lineTo(px(u), py(u)) : ctx.moveTo(px(u), py(u)); }
+    ctx.stroke(); ctx.setLineDash([]);
+    roughLine(300, 830, 1620, 830, { key: 'track', lw: 6 });
+    for (let s = 0; s <= 10; s++) { roughLine(px(s / 10), 815, px(s / 10), 845, { key: 'tick' + s, lw: 3 }); text(s + 's', px(s / 10), 875, { size: 24, color: '#7a7a7a' }); }
+    const u = clamp(0.5 - 0.42 * Math.cos(Math.max(0, lt - c[1]) * 1.25));
+    roughCircle(px(u), 830, 22, { key: 'knob', fill: C.purpleD, lw: 3 });
+    roughRect(px(u) - 105, 740, 210, 56, { key: 'tval', fill: C.white, lw: 3, rad: 28 });
+    text(`t = ${(u * 10).toFixed(2)}s`, px(u), 769, { size: 32, color: C.purpleD });
+    star(px(u), py(u), 62, { key: 'ftStar', rot: u * 2, blinkT: lt, mood: 0.8 });
+    ctx.restore();
+  },
+
+  clock(lt, d, c) {
+    chip('声音', C.purple);
+    text(reveal('配音 = 全片的时钟', prog(lt, c[0], 1.0)), W / 2, 175, { size: 76 });
+    const x0 = 200, x1 = 1720, yc = 600, fr = FIXED('wave');
+    const ph = x0 + (x1 - x0) * prog(lt, 0.3, d - 1.0);
+    for (let x = x0, i = 0; x <= x1; x += 14, i++) {
+      const amp = (0.25 + 0.75 * Math.abs(Math.sin(i * 0.19) * Math.sin(i * 0.051 + 1))) * (0.6 + 0.4 * fr()) * 110;
+      ctx.fillStyle = x < ph ? C.purpleD : '#cbbdf3'; ctx.beginPath(); ctx.roundRect(x - 4, yc - amp, 8, amp * 2, 4); ctx.fill();
+    }
+    const marks = [0.2, 0.5, 0.8];
+    marks.forEach((m, i) => {
+      const mx = lerp(x0, x1, m);
+      roughLine(mx, yc - 150, mx, yc + 150, { key: 'mk' + i, lw: 3, stroke: C.orangeD });
+      text(`第 ${i + 1} 句`, mx, yc + 190, { size: 32, color: C.orangeD });
+      const tHit = 0.3 + (d - 1.0) * m;                  // when the playhead reaches this mark
+      const sp = prog(lt, tHit, 0.55);
+      if (sp > 0) {
+        const ring = prog(lt, tHit, 0.5);
+        if (ring < 1) { ctx.strokeStyle = `rgba(230,133,69,${1 - ring})`; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(mx, yc - 230, 30 + ring * 90, 0, Math.PI * 2); ctx.stroke(); }
+        star(mx, yc - 230 - Math.sin(prog(lt, tHit + 0.55, 0.8) * Math.PI) * 20, 62 * easeOutBack(sp), { key: 'cs' + i, blinkT: lt + i, mood: 1 });
+      }
+    });
+    roughLine(ph, yc - 170, ph, yc + 170, { key: 'ph', lw: 6, stroke: C.red });
+    ctx.fillStyle = C.red; ctx.beginPath(); ctx.moveTo(ph - 16, yc - 185); ctx.lineTo(ph + 16, yc - 185); ctx.lineTo(ph, yc - 162); ctx.fill();
+    text(reveal('每句话的开始时间 → 动作的时间点', prog(lt, c[1], 1.4)), W / 2, 870, { size: 46, color: C.purpleD });
+  },
+
+  capture(lt, d, c) {
+    chip('冻结时间，逐帧拍', C.orange);
+    const SH = 3;                                         // shots per second (slowed down for the eye)
+    const fi = Math.floor(lt * SH), local = lt - fi / SH;
+    roughRect(150, 170, 720, 460, { key: 'br', fill: C.white });
+    ctx.fillStyle = '#ece6da'; ctx.fillRect(165, 185, 690, 46);
+    [C.red, C.yellow, C.greenD].forEach((col, i) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(195 + i * 30, 208, 9, 0, Math.PI * 2); ctx.fill(); });
+    miniScene(170, 240, 680, 370, 'brs');
+    const sx = u => 250 + (u % 1) * 520;
+    star(sx(fi * 0.07), 440 - Math.sin(fi * 0.6) * 60, 64, { key: 'brStar', blinkT: 9, mood: 0.7 });
+    text(`第 ${fi}/${SH * 10} 秒`, 760, 208, { size: 26, color: C.orangeD });
+    const flash = 1 - prog(local, 0, 0.16);
+    if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.85 * flash})`; ctx.fillRect(165, 185, 690, 430); }
+    // camera
+    roughRect(905, 330, 150, 105, { key: 'cam', fill: '#5b6070', rad: 16 });
+    roughRect(935, 310, 50, 30, { key: 'camtop', fill: '#5b6070', rad: 8 });
+    roughCircle(980, 383, 34, { key: 'lens', fill: '#c9dcf2', lw: 4 });
+    if (flash > 0.3) for (let i = 0; i < 3; i++) roughLine(1065, 330 + i * 18 - 10, 1095, 315 + i * 26 - 20, { key: 'ray' + i, lw: 4, stroke: C.orangeD });
+    // filmstrip accumulating
+    const sy = 700, cwid = 82, chh = 62;
+    ctx.fillStyle = C.dark; ctx.beginPath(); ctx.roundRect(150, sy - 30, 960, chh + 60, 14); ctx.fill();
+    const maxShown = 10, shown = Math.min(fi, maxShown);
+    for (let k = 0; k < shown; k++) {
+      const tx = 175 + k * (cwid + 10), ty = sy;
+      let x = tx, y = ty;
+      if (k === shown - 1 && fi <= maxShown) { const p = easeInOut(prog(local, 0.02, 0.28)); x = lerp(470, tx, p); y = lerp(400, ty, p); }
+      miniScene(x, y, cwid, chh, 'fc' + k);
+      star(x + 16 + (k * 0.07 % 1) * 50, y + 34, 13, { key: 'fcs' + k, face: false });
+    }
+    // FFmpeg on line 2
+    const gp = prog(lt, c[1], 0.6);
+    if (gp > 0) {
+      ctx.save(); ctx.globalAlpha = easeOut(gp);
+      roughRect(1230, 340, 360, 190, { key: 'ff', fill: C.orange, rad: 30 });
+      text('FFmpeg', 1410, 435, { size: 62 });
+      for (let x = 1240, i = 0; x < 1580; x += 12, i++) { const a = (0.3 + 0.7 * Math.abs(Math.sin(i * 0.5))) * 30; ctx.fillStyle = C.purpleD; ctx.beginPath(); ctx.roundRect(x, 680 - a, 6, a * 2, 3); ctx.fill(); }
+      arrow(1120, 730, 1240, 560, { key: 'af1', lw: 5 });
+      arrow(1410, 640, 1410, 545, { key: 'af2', lw: 5 });
+      ctx.restore();
+      const mp = prog(lt, c[1] + 1.2, 0.6);
+      if (mp > 0) arrow(1600, 435, 1600 + 70 * easeOut(mp), 435, { key: 'af3', lw: 6 });
+      withScale(1770, 435, easeOutBack(mp), () => {
+        roughPoly([[1700, 330], [1800, 330], [1840, 370], [1840, 540], [1700, 540]], { key: 'mp4', fill: C.white });
+        ctx.fillStyle = C.orangeD; ctx.beginPath(); ctx.moveTo(1752, 400); ctx.lineTo(1752, 470); ctx.lineTo(1800, 435); ctx.fill();
+        text('MP4', 1770, 510, { size: 34 });
+      });
+    }
+  },
+
+  rules(lt, d, c) {
+    chip('三条规矩', C.green);
+    const cards = [
+      { x: 420, at: c[0] + 1.3, label: '不读当前时间', icon: 'clock' },
+      { x: 960, at: c[1], label: '随机数固定种子', icon: 'dice' },
+      { x: 1500, at: c[1] + 1.5, label: '渲染不联网', icon: 'wifi' },
+    ];
+    for (const cd of cards) {
+      const p = prog(lt, cd.at, 0.6);
+      withScale(cd.x, 450, easeOutBack(p), () => {
+        roughRect(cd.x - 230, 230, 460, 440, { key: 'card' + cd.icon, fill: C.white, rad: 34 });
+        const ix = cd.x, iy = 400;
+        if (cd.icon === 'clock') {
+          roughCircle(ix, iy, 90, { key: 'clk', fill: C.blue, lw: 5 });
+          const a = lt * 2.5;                                // hands still move: it's scene time, not wall time
+          roughLine(ix, iy, ix + Math.cos(a) * 60, iy + Math.sin(a) * 60, { key: 'h1', lw: 6 });
+          roughLine(ix, iy, ix + Math.cos(a / 12) * 40, iy + Math.sin(a / 12) * 40, { key: 'h2', lw: 8 });
+        } else if (cd.icon === 'dice') {
+          roughRect(ix - 85, iy - 85, 170, 170, { key: 'dice', fill: C.purple, rad: 26, lw: 5 });
+          ctx.fillStyle = C.ink; [[-45, -45], [45, -45], [0, 0], [-45, 45], [45, 45]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.arc(ix + dx, iy + dy, 13, 0, Math.PI * 2); ctx.fill(); });
+          roughRect(ix + 40, iy + 30, 80, 66, { key: 'lock', fill: C.yellow, rad: 12, lw: 4 });
+          ctx.strokeStyle = C.ink; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(ix + 80, iy + 30, 22, Math.PI, 0); ctx.stroke();
+        } else {
+          for (let i = 0; i < 3; i++) { ctx.strokeStyle = C.blueD; ctx.lineWidth = 12; ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(ix, iy + 60, 40 + i * 38, -Math.PI * 0.78, -Math.PI * 0.22); ctx.stroke(); }
+          ctx.fillStyle = C.blueD; ctx.beginPath(); ctx.arc(ix, iy + 60, 12, 0, Math.PI * 2); ctx.fill();
+        }
+        if (cd.icon !== 'dice') roughLine(ix - 95, iy - 95, ix + 95, iy + 95, { key: 'slash' + cd.icon, lw: 12, stroke: C.red });
+        text(cd.label, cd.x, 590, { size: 44 });
+        // check mark on line 3
+        const kp = easeOut(prog(lt, c[2] + cards.indexOf(cd) * 0.15, 0.4));
+        if (kp > 0) {
+          roughCircle(cd.x + 190, 265, 46, { key: 'ck' + cd.icon, fill: C.greenD, lw: 4 });
+          const pts = [[cd.x + 168, 266], [cd.x + 185, 284], [cd.x + 214, 248]];
+          ctx.strokeStyle = C.white; ctx.lineWidth = 10; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
+          ctx.moveTo(...pts[0]); if (kp > 0.4) ctx.lineTo(...pts[1]); else ctx.lineTo(lerp(pts[0][0], pts[1][0], kp / 0.4), lerp(pts[0][1], pts[1][1], kp / 0.4));
+          if (kp > 0.4) ctx.lineTo(lerp(pts[1][0], pts[2][0], (kp - 0.4) / 0.6), lerp(pts[1][1], pts[2][1], (kp - 0.4) / 0.6));
+          ctx.stroke();
+        }
+      });
+    }
+    const ep = prog(lt, c[2] + 0.5, 0.6);
+    if (ep > 0) {
+      const jump = Math.abs(Math.sin((lt - c[2] - 0.5) * 4)) * 50;
+      star(560, 820 - jump, 70 * easeOutBack(ep), { key: 'end', mood: 1, blinkT: lt });
+      text(reveal('同样的代码 → 同样的视频', prog(lt, c[2] + 0.7, 1.0)), 1080, 820, { size: 58, color: C.greenD });
+    }
+  },
+};
+
+function render(t) {
+  BOIL = Math.floor(t * 8);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  background();
+  const sc = TL.scenes.find(s => t >= s.start && t < s.end) || TL.scenes[TL.scenes.length - 1];
+  const lt = t - sc.start;
+  SCENES[sc.id](lt, sc.end - sc.start, sc.lines.map(l => l.start - sc.start));
+  wipes(t);
+  subtitles(t);
+}
+
+window.__seek = async t => {
+  render(t);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+};
+render(0);
+</script>
+</body>
+</html>

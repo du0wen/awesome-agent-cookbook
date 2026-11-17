@@ -12,7 +12,18 @@
 | Category | Recipe / Skill | Target Assistants | Summary |
 | :--- | :--- | :--- | :--- |
 | **Workflow Protocol** | [Optimization Workflow](./skills/optimization-workflow/SKILL.md) | Universal (Cursor / Claude / Codex / Antigravity) | A strict 3-phase execution protocol (`State Assessment` ➔ `Self-Diagnosis` ➔ `Tiered Proposals`) preventing premature or destructive code edits. |
+| **Creative Production** | [Code-Driven Video](./skills/code-driven-video/SKILL.md) · [Example](./examples/code-driven-video/) | Universal (Claude Code / Codex / Cursor) | Make MP4 explainers/animations by writing a deterministic `frame = f(t)` program: script & storyboard ➔ code visuals ➔ seekable timeline ➔ TTS-as-clock ➔ headless frame capture ➔ FFmpeg mux, with screenshot self-review. |
 | **Quota Management** | [Codex & Claude 5h Rolling Window](./tips/codex-5h-quota-window.md) | OpenAI Codex / Claude Code | Align 5-hour rolling rate-limit windows with daily work schedules via automated heartbeat triggers, preventing mid-flow lockouts. |
+
+---
+
+## 🎬 Showcase: Code-Driven Video
+
+A 53-second explainer made end-to-end by an agent following the `code-driven-video` skill. Narration, Canvas animation, frame capture, and FFmpeg muxing are all code. Full source and reproduction steps are in [`examples/code-driven-video/`](./examples/code-driven-video/).
+
+[![Code-driven video demo](./examples/code-driven-video/poster.jpg)](./examples/code-driven-video/demo.mp4)
+
+> **Credit**: This skill is distilled from 宝玉 (@dotey)'s article [《Claude Opus 5.5 是怎么做出视频的》](https://x.com/dotey/status/2105181393638531536), which explains how a text-only model produces video by writing programs. Practical additions (render harness, determinism checks, and lessons from the demo run) were made while testing the skill.
 
 ---
 
@@ -77,8 +88,13 @@ The repository maintains a lean, high-signal structure focused only on practical
 ```text
 .
 ├── skills/        # Reusable agent skills (SKILL.md) and execution protocols
+│   ├── code-driven-video/
+│   │   ├── SKILL.md
+│   │   └── references/render-harness.md
 │   └── optimization-workflow/
 │       └── SKILL.md
+├── examples/      # Full sample projects produced with the skills (source + output)
+│   └── code-driven-video/
 ├── tips/          # Quota management, flow state preservation, and performance hacks
 │   └── codex-5h-quota-window.md
 ├── LICENSE
@@ -91,7 +107,7 @@ The repository maintains a lean, high-signal structure focused only on practical
 
 - **File Naming**: Use `kebab-case` for all files and directories (e.g., `rate-limit-mitigation.md`).
 - **Language**: English preferred for docs and skills to ensure maximum compatibility with agent loaders.
-- **Adding Content**: Place executable agent skills in `skills/<skill-name>/SKILL.md`, and practical tricks or guides in `tips/`. Update the [Curated Recipes & Skills](#curated-recipes--skills) table in this README with your addition.
+- **Adding Content**: Place executable agent skills in `skills/<skill-name>/SKILL.md`, practical tricks or guides in `tips/`, and sample projects in `examples/<skill-name>/` (kept outside the skill folder so installing a skill doesn't copy large media). Update the [Curated Recipes & Skills](#curated-recipes--skills) table in this README with your addition.
 
 ---
 

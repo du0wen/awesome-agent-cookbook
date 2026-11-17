@@ -33,3 +33,14 @@ yarn-error.log*
 *.log
 *.tmp
 .cache/
+
+# Secrets
+.env
+.env.*
+
+# Code-driven video build outputs
+examples/**/frames/
+examples/**/stills/
+examples/**/audio/
+examples/**/mix.wav
+examples/**/out.mp4
