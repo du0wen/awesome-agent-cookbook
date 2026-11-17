@@ -2,7 +2,7 @@
 
 A complete project produced by following the [`code-driven-video`](../../skills/code-driven-video/SKILL.md) skill. The video explains its own pipeline in 6 scenes: hook → video = frames → `frame = f(t)` → narration as clock → freeze-time capture → three determinism rules.
 
-https://github.com/user-attachments/assets/91291f0d-5a0c-4e11-9f11-0fc347eb6887
+https://github.com/user-attachments/assets/4449b582-e69f-4d46-978f-5a6f0a88e9f5
 
 1920×1080, 30 fps, 53 s. The original file is also committed as [`demo.mp4`](./demo.mp4) (~7.5 MB).
 

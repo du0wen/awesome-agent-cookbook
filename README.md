@@ -21,7 +21,7 @@
 
 A 53-second explainer made end-to-end by an agent following the `code-driven-video` skill. Narration, Canvas animation, frame capture, and FFmpeg muxing are all code. Full source and reproduction steps are in [`examples/code-driven-video/`](./examples/code-driven-video/).
 
-https://github.com/user-attachments/assets/91291f0d-5a0c-4e11-9f11-0fc347eb6887
+https://github.com/user-attachments/assets/4449b582-e69f-4d46-978f-5a6f0a88e9f5
 
 > **Credit**: This skill is distilled from 宝玉 (@dotey)'s article [《Claude Opus 5.5 是怎么做出视频的》](https://x.com/dotey/status/2105181393638531536), which explains how a text-only model produces video by writing programs. Practical additions (render harness, determinism checks, and lessons from the demo run) were made while testing the skill.
 
